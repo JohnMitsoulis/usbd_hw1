@@ -16,8 +16,8 @@
  * @brief Heap file header containing metadata about the file organization
  */
 typedef struct HeapFileHeader {
-    char file_type[8];                  //tipos arxiou p.x. HP_FILE yaparei gia auto stin arxi tis ekfonisis
-    int recordCount;                    //sinolikos ari8mos eggrafon se olo to arxio
+    char file_type[8];                  //type of file
+    int recordCount;                    //total number of records in the heapfile
 } HeapFileHeader;
 
 /**
@@ -28,7 +28,7 @@ typedef struct HeapFileIterator{
     HeapFileHeader* header;
     int currentBlock;   
     int currentRecord;
-    int recordCount;    //sinolikos ari8mos eggrafon se olo to arxio
+    int recordCount;    //total number of records in the heapfile
     int searchID;
 } HeapFileIterator;
 

@@ -18,49 +18,47 @@
 
 int HeapFile_Create(const char* fileName)
 {
-  //o diaxiristis exei faei init stin hp_main
 
-  CALL_BF(BF_CreateFile(fileName));                                   //arxikopoiisi kai anigma arxiou
+  CALL_BF(BF_CreateFile(fileName));                                   //initialize and open file
   int file_handle;
   CALL_BF(BF_OpenFile(fileName, &file_handle));
 
-  BF_Block* block;                                                    //arxikopoiisi kai desmeusi protou block (gia ta metadata tou arxiou)
-  BF_Block_Init(&block);                                              //den epistrefei timi ara den mpainei se CALL_BF
+  BF_Block* block;                                                    //initialization and creation of first block with metadata
+  BF_Block_Init(&block);                                              
   CALL_BF(BF_AllocateBlock(file_handle, block));
   
-  //grafoume metadata stin epikefalida
-  char* data = BF_Block_GetData(block);
+  
+  char* data = BF_Block_GetData(block);                                 //write metadata in the header block
   HeapFileHeader header;
-  memcpy(header.file_type, "HP_FILE", strlen("HP_FILE") + 1);           //ti tipos arxiou einai | memcpy(*to, *from, numBytes); 8a mporousame na xrisimopoiisoume kai strcpy edo
-  header.recordCount = 0;                                                //ari8mos ton eggrafon sto arxio
-  //vazoume meta ama 8eloume kai alles plirofories                                     
-  memcpy(data, &header, sizeof(HeapFileHeader));                        //adigrafoume oli ti domi mesa sto block
+  memcpy(header.file_type, "HP_FILE", strlen("HP_FILE") + 1);           //type of file
+  header.recordCount = 0;                                                //number of records in the file                                 
+  memcpy(data, &header, sizeof(HeapFileHeader));                        //copy the structure in the file
 
-  BF_Block_SetDirty(block);                                             //to kanoume dirty kai unpin
+  BF_Block_SetDirty(block);                                             //dirty and unpin
   CALL_BF(BF_UnpinBlock(block));
 
   BF_Block_Destroy(&block);
   CALL_BF(BF_CloseFile(file_handle));
   
-  return 1;                                                             //ean paei kati la8os i CALL_bf 8a epistrepsei 0
+  return 1;                                                             //CALL_BF returns 0 for us
 }
 
 int HeapFile_Open(const char *fileName, int *file_handle, HeapFileHeader** header_info)
 {
-  CALL_BF(BF_OpenFile(fileName, file_handle)); //anigoume to arxio
+  CALL_BF(BF_OpenFile(fileName, file_handle)); //open the file
 
   BF_Block* block;
   BF_Block_Init(&block);
-  CALL_BF(BF_GetBlock(*file_handle, 0, block)); //pairnoume to proto block (ekei einai i kefalida)
+  CALL_BF(BF_GetBlock(*file_handle, 0, block)); //take first block with metadata
   
   char* data = BF_Block_GetData(block);
 
   HeapFileHeader temp_header;
   memcpy(&temp_header, data, sizeof(HeapFileHeader));
 
-  *header_info = malloc(sizeof(HeapFileHeader));
+  *header_info = malloc(sizeof(HeapFileHeader));  //allocate memory for header
   if(*header_info == NULL) {return 0;}
-  memcpy(*header_info, &temp_header, sizeof(HeapFileHeader));
+  memcpy(*header_info, &temp_header, sizeof(HeapFileHeader)); //copy data to header
   
   CALL_BF(BF_UnpinBlock(block));
   BF_Block_Destroy(&block);
@@ -72,52 +70,109 @@ int HeapFile_Close(int file_handle, HeapFileHeader *hp_info)
 {
   BF_Block* block;
   BF_Block_Init(&block);
-  int blockNum;
-  CALL_BF(BF_GetBlockCounter(file_handle, &blockNum))
-  int i = (blockNum - 1);
-  for(i; i >= 0; i--) {  //gia kathe block tou Heap File
-    CALL_BF(BF_GetBlock(file_handle, i, block));    //pare to block kai sbhsto
-    BF_Block_Destroy(&block);
-  }
-  free(hp_info);  //free to header???
+  CALL_BF(BF_GetBlock(file_handle, 0, block)); //take the first block with metadata
+
+  char* data = BF_Block_GetData(block);
+
+  memcpy(data, hp_info, sizeof(HeapFileHeader)); //update header
+
+  BF_Block_SetDirty(block);
+  CALL_BF(BF_UnpinBlock(block));
+
+  BF_Block_Destroy(&block);
+  CALL_BF(BF_CloseFile(file_handle));
+
+  free(hp_info); //free header that was dynamically allocated in open
   return 1;
 }
+
 
 int HeapFile_InsertRecord(int file_handle, HeapFileHeader *hp_info, const Record record)
 {
+  int block_count;
+  CALL_BF(BF_GetBlockCounter(file_handle, &block_count));
+
   BF_Block* block;
   BF_Block_Init(&block);
-  int blockNum;
-  CALL_BF(BF_GetBlockCounter(file_handle, &blockNum));   //pare arithmo blocks
-  int BlockRecCount = BF_BLOCK_SIZE / sizeof(Record);   //posa records xorane ana block (edo 8)
-  int lastBlockRec = hp_info->recordCount % BlockRecCount;  //posa records xorane sto teleutaio block
-  int has_space = lastBlockRec < BlockRecCount ? 1 : 0;   //an teleutaio exei ligotera apo 8 records exei xoro
-  if (has_space){
-    CALL_BF(BF_GetBlock(file_handle, (blockNum - 1), block));  //pare teleutaio block kai bale to record
-    char* data = BF_Block_GetData(block);
-    memcpy(data + lastBlockRec*sizeof(Record), &record, sizeof(Record));
-    BF_Block_SetDirty(block);
-  } else {
-    CALL_BF(BF_AllocateBlock(file_handle, block));  //allocate kainourgio block
-    char* data = BF_Block_GetData(block); //pare data kai bale to record
-    memcpy(data, &record, sizeof(Record));
-    BF_Block_SetDirty(block);
+  if(block_count == 1){                             //if only header allocate new block else get the last block
+    CALL_BF(BF_AllocateBlock(file_handle, block));
   }
+  else{
+    CALL_BF(BF_GetBlock(file_handle, block_count - 1, block));
+  }
+  
+  char * data = BF_Block_GetData(block);
+
+  int recordsPerBlock = BF_BLOCK_SIZE / sizeof(Record); //records in a block
+  int recordsInLastBlock = hp_info->recordCount % recordsPerBlock; //records in last block
+
+  if(recordsInLastBlock == 0){ //if last block full
+    CALL_BF(BF_UnpinBlock(block)); //unpin last block
+    BF_Block_Destroy(&block);
+    
+    BF_Block_Init(&block);
+    CALL_BF(BF_AllocateBlock(file_handle, block)); //allocate a new one
+    data = BF_Block_GetData(block);
+  }
+  
+  memcpy(data + recordsInLastBlock * sizeof(Record), &record, sizeof(Record)); //correctly add the new record
+
+  hp_info->recordCount++;
+
+  BF_Block_SetDirty(block);
+  CALL_BF(BF_UnpinBlock(block));
   BF_Block_Destroy(&block);
+
   return 1;
 }
 
-
-HeapFileIterator HeapFile_CreateIterator(    int file_handle, HeapFileHeader* header_info, int id)
+HeapFileIterator HeapFile_CreateIterator(int file_handle, HeapFileHeader* header_info, int id)
 {
   HeapFileIterator out;
+  out.file_handle = file_handle;
+  out.header = header_info;
+  out.currentBlock = 1; //0 is header, so initialize as 1
+  out.currentRecord = 0;
+  out.recordCount = header_info->recordCount;
+  out.searchID = id;
   return out;
 }
 
 
-int HeapFile_GetNextRecord(    HeapFileIterator* heap_iterator, Record** record)
+int HeapFile_GetNextRecord(HeapFileIterator* heap_iterator, Record** record)
 {
-    * record=NULL;
-    return 1;
+  int block_count;
+  CALL_BF(BF_GetBlockCounter(heap_iterator->file_handle, &block_count));
+
+  int recordsPerBlock = BF_BLOCK_SIZE / sizeof(Record);
+
+  BF_Block* block;
+  BF_Block_Init(&block);
+  
+  while(heap_iterator->currentBlock < block_count){
+    CALL_BF(BF_GetBlock(heap_iterator->file_handle, heap_iterator->currentBlock, block));
+    char* data = BF_Block_GetData(block);
+    
+    while(heap_iterator->currentRecord < recordsPerBlock){
+      Record* curent_record = (Record*)(data + heap_iterator->currentRecord * sizeof(Record)); //address of current record
+      
+      if(curent_record->id == heap_iterator->searchID){
+        *record = curent_record;
+        heap_iterator->currentRecord++; //since we found it, we search from the next record moving forward
+        CALL_BF(BF_UnpinBlock(block));
+        BF_Block_Destroy(&block);
+        return 1;
+      }
+      heap_iterator->currentRecord++;
+    }
+    
+    CALL_BF(BF_UnpinBlock(block));
+    heap_iterator->currentBlock++;
+    heap_iterator->currentRecord = 0;
+  }
+  
+  BF_Block_Destroy(&block); 
+  *record = NULL;
+  return 0;
 }
 
